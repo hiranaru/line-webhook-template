@@ -9,6 +9,6 @@
   "dependencies": {
     "@line/bot-sdk": "^7.5.1",
     "express": "^4.18.2",
-    "@google-cloud/vision": "^4.4.0"
+    "@google-cloud/vision": "^3.4.1"
   }
 }
