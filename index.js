@@ -15,18 +15,14 @@ const visionClient = new vision.ImageAnnotatorClient({
   credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS),
 });
 
-// 除外すべきワード（小計・合計など）
-const excludeKeywords = [
-  "小計", "合計", "お釣", "現金", "クレジット", "カード", "預かり", "内税", "外税", "領収", "お買上", "ご利用", "計", "消費税"
-];
-
-// カテゴリ分類用キーワード辞書
+// カテゴリ分類キーワード（最低限）
 const categoryKeywords = {
   食費: ["パン", "弁当", "ジュース", "コーヒー", "おにぎり", "牛乳", "惣菜", "お菓子", "カレー", "カップ麺"],
   日用品: ["洗剤", "ティッシュ", "トイレットペーパー", "歯ブラシ", "シャンプー"],
   医療費: ["風邪薬", "頭痛薬", "目薬", "マスク", "絆創膏"],
 };
 
+// カテゴリ推定
 function estimateCategory(itemName) {
   for (const [category, keywords] of Object.entries(categoryKeywords)) {
     if (keywords.some((word) => itemName.includes(word))) {
@@ -36,19 +32,21 @@ function estimateCategory(itemName) {
   return "その他";
 }
 
+// 商品行の分類
 function classifyItems(text) {
   const lines = text.split("\n");
   const categorized = {};
   let total = 0;
 
-  for (const line of lines) {
-    // 除外キーワードを含む行はスキップ
-    if (excludeKeywords.some((kw) => line.includes(kw))) {
-      continue;
-    }
+  for (let line of lines) {
+    line = line.replace(/　/g, ""); // 全角スペース除去
 
-    // 「商品名 金額」形式のマッチを試みる
-    const match = line.match(/(.+?)\s+(\d{2,5})円?/);
+    // 「合計」「小計」「お預り」「釣銭」などのワードが入っている行はスキップ
+    if (/合計|小計|お預|預かり|釣銭|合計金額|合計(税込)|消費税/.test(line)) continue;
+
+    // 数字が2〜5桁、円の直前または後にある場合にマッチ
+    const match = line.match(/(.+?)(\d{2,5})円?/);
+
     if (match) {
       const itemName = match[1].trim();
       const price = parseInt(match[2]);
@@ -63,6 +61,7 @@ function classifyItems(text) {
   return { categorized, total };
 }
 
+// Webhook
 app.post("/webhook", async (req, res) => {
   Promise.all(req.body.events.map(handleEvent))
     .then((result) => res.json(result))
@@ -72,6 +71,7 @@ app.post("/webhook", async (req, res) => {
     });
 });
 
+// イベント処理
 async function handleEvent(event) {
   if (event.type !== "message" || event.message.type !== "image") {
     return client.replyMessage(event.replyToken, {
