@@ -2,7 +2,6 @@ const express = require("express");
 const line = require("@line/bot-sdk");
 const vision = require("@google-cloud/vision");
 
-// LINE Bot の設定
 const config = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
   channelSecret: process.env.LINE_CHANNEL_SECRET,
@@ -12,19 +11,22 @@ const app = express();
 app.use(line.middleware(config));
 const client = new line.Client(config);
 
-// Google Cloud Vision API の初期化
 const visionClient = new vision.ImageAnnotatorClient({
   credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS),
 });
 
-// カテゴリ分類用のキーワード辞書（最低限）
+// 除外すべきワード（小計・合計など）
+const excludeKeywords = [
+  "小計", "合計", "お釣", "現金", "クレジット", "カード", "預かり", "内税", "外税", "領収", "お買上", "ご利用", "計", "消費税"
+];
+
+// カテゴリ分類用キーワード辞書
 const categoryKeywords = {
   食費: ["パン", "弁当", "ジュース", "コーヒー", "おにぎり", "牛乳", "惣菜", "お菓子", "カレー", "カップ麺"],
   日用品: ["洗剤", "ティッシュ", "トイレットペーパー", "歯ブラシ", "シャンプー"],
   医療費: ["風邪薬", "頭痛薬", "目薬", "マスク", "絆創膏"],
 };
 
-// カテゴリ推定ロジック
 function estimateCategory(itemName) {
   for (const [category, keywords] of Object.entries(categoryKeywords)) {
     if (keywords.some((word) => itemName.includes(word))) {
@@ -34,17 +36,19 @@ function estimateCategory(itemName) {
   return "その他";
 }
 
-// 金額抽出とカテゴリ分類
 function classifyItems(text) {
   const lines = text.split("\n");
   const categorized = {};
   let total = 0;
-  let unmatched = 0;
 
   for (const line of lines) {
-    const normalized = line.replace(/\s/g, ""); // 空白全削除
-    const match = normalized.match(/^(.+?)(\d{2,5})円?$/); // スペースがなくてもOK
+    // 除外キーワードを含む行はスキップ
+    if (excludeKeywords.some((kw) => line.includes(kw))) {
+      continue;
+    }
 
+    // 「商品名 金額」形式のマッチを試みる
+    const match = line.match(/(.+?)\s+(\d{2,5})円?/);
     if (match) {
       const itemName = match[1].trim();
       const price = parseInt(match[2]);
@@ -53,16 +57,12 @@ function classifyItems(text) {
       if (!categorized[category]) categorized[category] = 0;
       categorized[category] += price;
       total += price;
-    } else {
-      unmatched++;
     }
   }
 
-  console.log(`分類できなかった行数: ${unmatched}`);
   return { categorized, total };
 }
 
-// Webhookエンドポイント
 app.post("/webhook", async (req, res) => {
   Promise.all(req.body.events.map(handleEvent))
     .then((result) => res.json(result))
@@ -72,7 +72,6 @@ app.post("/webhook", async (req, res) => {
     });
 });
 
-// イベント処理
 async function handleEvent(event) {
   if (event.type !== "message" || event.message.type !== "image") {
     return client.replyMessage(event.replyToken, {
@@ -88,7 +87,6 @@ async function handleEvent(event) {
     await new Promise((resolve) => stream.on("end", resolve));
     const buffer = Buffer.concat(chunks);
 
-    // OCR実行
     const [result] = await visionClient.textDetection({ image: { content: buffer } });
     const detections = result.textAnnotations;
     const text = detections.length ? detections[0].description : "";
@@ -100,7 +98,6 @@ async function handleEvent(event) {
       });
     }
 
-    // カテゴリ分類・集計
     const { categorized, total } = classifyItems(text);
 
     if (Object.keys(categorized).length === 0) {
@@ -110,7 +107,6 @@ async function handleEvent(event) {
       });
     }
 
-    // 返信用メッセージ組み立て
     let message = "📊 今日の支出を分類しました！\n";
     for (const [category, amount] of Object.entries(categorized)) {
       message += `- ${category}：${amount.toLocaleString()}円\n`;
@@ -130,7 +126,6 @@ async function handleEvent(event) {
   }
 }
 
-// ポート指定
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`🚀 LINE Bot server running on port ${port}`);
