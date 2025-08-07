@@ -39,9 +39,12 @@ function classifyItems(text) {
   const lines = text.split("\n");
   const categorized = {};
   let total = 0;
+  let unmatched = 0;
 
   for (const line of lines) {
-    const match = line.match(/(.+?)\s+(\d{2,5})円?/); // 例: パン 130円
+    const normalized = line.replace(/\s/g, ""); // 空白全削除
+    const match = normalized.match(/^(.+?)(\d{2,5})円?$/); // スペースがなくてもOK
+
     if (match) {
       const itemName = match[1].trim();
       const price = parseInt(match[2]);
@@ -50,9 +53,12 @@ function classifyItems(text) {
       if (!categorized[category]) categorized[category] = 0;
       categorized[category] += price;
       total += price;
+    } else {
+      unmatched++;
     }
   }
 
+  console.log(`分類できなかった行数: ${unmatched}`);
   return { categorized, total };
 }
 
