@@ -42,7 +42,6 @@ function classifyItems(text) {
     line = line.replace(/　/g, ""); // 全角スペース除去
     if (/合計|小計|お預|預かり|釣銭|合計金額|合計\(税込\)|消費税|現金/.test(line)) continue;
 
-    // 数字の直前に商品名があるパターンに対応（商品名＋空白＋金額）
     const match = line.match(/(.+?)\s*([0-9]{2,5})\s*(円)?$/);
     if (match) {
       const itemName = match[1].trim();
@@ -88,9 +87,6 @@ async function handleEvent(event) {
     const detections = result.textAnnotations;
     const text = detections.length ? detections[0].description : "";
 
-    // OCR全文を表示
-    console.log("📄 OCR全文:\n", text);
-
     if (!text) {
       return client.replyMessage(event.replyToken, {
         type: "text",
@@ -100,23 +96,25 @@ async function handleEvent(event) {
 
     const { categorized, total } = classifyItems(text);
 
+    // 分類メッセージの組み立て
+    let summaryMessage = "📊 今日の支出を分類しました！\n";
     if (Object.keys(categorized).length === 0) {
-      return client.replyMessage(event.replyToken, {
-        type: "text",
-        text: "支出項目が見つかりませんでした。",
-      });
+      summaryMessage += "支出項目が見つかりませんでした。";
+    } else {
+      for (const [category, amount] of Object.entries(categorized)) {
+        summaryMessage += `- ${category}：${amount.toLocaleString()}円\n`;
+      }
+      summaryMessage += `- 合計：${total.toLocaleString()}円`;
     }
 
-    let message = "📊 今日の支出を分類しました！\n";
-    for (const [category, amount] of Object.entries(categorized)) {
-      message += `- ${category}：${amount.toLocaleString()}円\n`;
-    }
-    message += `- 合計：${total.toLocaleString()}円`;
+    // OCR全文メッセージ
+    const ocrMessage = `🧾 レシート全文:\n${text}`;
 
-    return client.replyMessage(event.replyToken, {
-      type: "text",
-      text: message,
-    });
+    // 2件同時に返信
+    return client.replyMessage(event.replyToken, [
+      { type: "text", text: ocrMessage },
+      { type: "text", text: summaryMessage },
+    ]);
   } catch (error) {
     console.error("OCR Error:", error);
     return client.replyMessage(event.replyToken, {
