@@ -40,13 +40,10 @@ function classifyItems(text) {
 
   for (let line of lines) {
     line = line.replace(/　/g, ""); // 全角スペース除去
+    if (/合計|小計|お預|預かり|釣銭|合計金額|合計\(税込\)|消費税|現金/.test(line)) continue;
 
-    // 「合計」「小計」「お預り」「釣銭」などのワードが入っている行はスキップ
-    if (/合計|小計|お預|預かり|釣銭|合計金額|合計(税込)|消費税/.test(line)) continue;
-
-    // 数字が2〜5桁、円の直前または後にある場合にマッチ
-    const match = line.match(/(.+?)(\d{2,5})円?/);
-
+    // 数字の直前に商品名があるパターンに対応（商品名＋空白＋金額）
+    const match = line.match(/(.+?)\s*([0-9]{2,5})\s*(円)?$/);
     if (match) {
       const itemName = match[1].trim();
       const price = parseInt(match[2]);
@@ -90,6 +87,9 @@ async function handleEvent(event) {
     const [result] = await visionClient.textDetection({ image: { content: buffer } });
     const detections = result.textAnnotations;
     const text = detections.length ? detections[0].description : "";
+
+    // OCR全文を表示
+    console.log("📄 OCR全文:\n", text);
 
     if (!text) {
       return client.replyMessage(event.replyToken, {
