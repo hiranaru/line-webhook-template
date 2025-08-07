@@ -32,7 +32,7 @@ function estimateCategory(itemName) {
   return "その他";
 }
 
-// 商品行の分類
+// 商品行の分類（価格の誤認識フィルタを強化）
 function classifyItems(text) {
   const lines = text.split("\n");
   const categorized = {};
@@ -40,12 +40,18 @@ function classifyItems(text) {
 
   for (let line of lines) {
     line = line.replace(/　/g, ""); // 全角スペース除去
+
+    // 除外キーワード（住所・電話番号・日付など）
     if (/合計|小計|お預|預かり|釣銭|合計金額|合計\(税込\)|消費税|現金/.test(line)) continue;
+    if (/〒|TEL|[0-9]{2,4}-[0-9]{2,4}-[0-9]{3,4}|[0-9]{4}\/[0-9]{1,2}\/[0-9]{1,2}/.test(line)) continue;
+    if (/^[0-9]{2,5}$/.test(line.trim())) continue; // 数字だけの行
 
     const match = line.match(/(.+?)\s*([0-9]{2,5})\s*(円)?$/);
     if (match) {
       const itemName = match[1].trim();
       const price = parseInt(match[2]);
+      if (price < 10 || price > 100000) continue; // 明らかに不自然な価格（例：1円や10万円以上）
+
       const category = estimateCategory(itemName);
 
       if (!categorized[category]) categorized[category] = 0;
@@ -110,7 +116,7 @@ async function handleEvent(event) {
     // OCR全文メッセージ
     const ocrMessage = `🧾 レシート全文:\n${text}`;
 
-    // 2件同時に返信
+    // 同時返信
     return client.replyMessage(event.replyToken, [
       { type: "text", text: ocrMessage },
       { type: "text", text: summaryMessage },
