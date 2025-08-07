@@ -1,37 +1,49 @@
-const express = require('express');
-const line = require('@line/bot-sdk');
+// 追加: visionとjson読み込み
+const vision = require('@google-cloud/vision');
+const { GoogleAuth } = require('google-auth-library');
 
-const app = express();
-app.use(express.json());
-
-const config = {
-  channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN,
-  channelSecret: process.env.CHANNEL_SECRET
-};
-
-const client = new line.Client(config);
-
-app.post('/webhook', (req, res) => {
-  Promise
-    .all(req.body.events.map(handleEvent))
-    .then((result) => res.json(result))
-    .catch((err) => {
-      console.error(err);
-      res.status(500).end();
-    });
+// GOOGLE_CREDENTIALS環境変数からクレデンシャルを作成
+const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+const client = new vision.ImageAnnotatorClient({
+  credentials,
 });
 
-function handleEvent(event) {
-  if (event.type !== 'message' || event.message.type !== 'text') {
+// Webhookハンドラーの中で画像が来たら処理する
+const handleEvent = async (event) => {
+  // 画像メッセージ以外は無視
+  if (event.message.type !== 'image') {
     return Promise.resolve(null);
   }
 
-  return client.replyMessage(event.replyToken, {
-    type: 'text',
-    text: `「${event.message.text}」を受け取りました！`
-  });
-}
+  try {
+    // LINEサーバーから画像のバイナリを取得
+    const stream = await clientConfig.getMessageContent(event.message.id);
+    const chunks = [];
 
-app.listen(3000, () => {
-  console.log('LINE bot listening on port 3000');
-});
+    for await (const chunk of stream) {
+      chunks.push(chunk);
+    }
+    const imageBuffer = Buffer.concat(chunks);
+
+    // Vision APIでOCR
+    const [result] = await client.textDetection({ image: { content: imageBuffer } });
+    const detections = result.textAnnotations;
+    const detectedText = detections[0]?.description || 'テキストが見つかりませんでした';
+
+    // OCR結果を返信
+    return clientConfig.replyMessage(event.replyToken, [
+      {
+        type: 'text',
+        text: `画像から読み取ったテキスト:\n${detectedText}`,
+      },
+    ]);
+  } catch (err) {
+    console.error('OCRエラー:', err);
+    return clientConfig.replyMessage(event.replyToken, [
+      {
+        type: 'text',
+        text: '画像の解析中にエラーが発生しました。',
+      },
+    ]);
+  }
+};
