@@ -1,6 +1,5 @@
 const express = require("express");
 const line = require("@line/bot-sdk");
-const vision = require("@google-cloud/vision");
 const fs = require("fs");
 const axios = require("axios");
 const path = require("path");
@@ -12,7 +11,8 @@ const config = {
 
 const app = express();
 const client = new line.Client(config);
-const visionClient = new vision.ImageAnnotatorClient();
+
+const API_KEY = process.env.VISION_API_KEY; // ここをRenderの環境変数に設定済みならOK！
 
 app.post("/webhook", line.middleware(config), async (req, res) => {
   const events = req.body.events;
@@ -29,11 +29,25 @@ app.post("/webhook", line.middleware(config), async (req, res) => {
 
         writable.on("finish", async () => {
           try {
-            const [result] = await visionClient.textDetection(filePath);
-            const detections = result.textAnnotations;
-            const fullText = detections.length > 0 ? detections[0].description : "";
+            const imageBuffer = fs.readFileSync(filePath);
+            const base64Image = imageBuffer.toString("base64");
 
-            // 💡 金額抽出：¥や円が付いてるもの、数字っぽいものを正規表現で抜き出し
+            const visionRes = await axios.post(
+              `https://vision.googleapis.com/v1/images:annotate?key=${API_KEY}`,
+              {
+                requests: [
+                  {
+                    image: { content: base64Image },
+                    features: [{ type: "TEXT_DETECTION" }],
+                  },
+                ],
+              }
+            );
+
+            const annotations =
+              visionRes.data.responses[0].textAnnotations || [];
+            const fullText = annotations.length > 0 ? annotations[0].description : "";
+
             const prices = fullText.match(/(?:¥|￥)?\d{1,3}(?:,\d{3})*(?:円)?/g) || [];
 
             const replyText = prices.length > 0
@@ -47,7 +61,7 @@ app.post("/webhook", line.middleware(config), async (req, res) => {
 
             fs.unlinkSync(filePath);
           } catch (error) {
-            console.error("OCR処理エラー:", error);
+            console.error("OCR処理エラー:", error.message);
             await client.replyMessage(event.replyToken, {
               type: "text",
               text: "画像の解析中にエラーが発生しました。",
@@ -55,7 +69,7 @@ app.post("/webhook", line.middleware(config), async (req, res) => {
           }
         });
       } catch (err) {
-        console.error("画像取得エラー:", err);
+        console.error("画像取得エラー:", err.message);
         await client.replyMessage(event.replyToken, {
           type: "text",
           text: "画像を取得できませんでした。",
