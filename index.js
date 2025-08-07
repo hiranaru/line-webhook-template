@@ -2,72 +2,72 @@ const express = require("express");
 const line = require("@line/bot-sdk");
 const vision = require("@google-cloud/vision");
 const fs = require("fs");
-const path = require("path");
 const axios = require("axios");
+const path = require("path");
 
-// LINE Bot の設定（環境変数から読み取る）
 const config = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
-  channelSecret: process.env.LINE_CHANNEL_SECRET
+  channelSecret: process.env.LINE_CHANNEL_SECRET,
 };
 
 const app = express();
-app.use(line.middleware(config));
-
 const client = new line.Client(config);
+const visionClient = new vision.ImageAnnotatorClient();
 
-// Google Cloud Visionクライアントの初期化（環境変数 GOOGLE_CREDENTIALS 必須）
-const visionClient = new vision.ImageAnnotatorClient({
-  credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS)
-});
+app.post("/webhook", line.middleware(config), async (req, res) => {
+  const events = req.body.events;
 
-// メインハンドラー
-app.post("/webhook", async (req, res) => {
-  Promise.all(req.body.events.map(handleEvent))
-    .then((result) => res.json(result))
-    .catch((err) => {
-      console.error("Webhook Error:", err);
-      res.status(500).end();
-    });
-});
+  for (const event of events) {
+    if (event.type === "message" && event.message.type === "image") {
+      try {
+        const messageId = event.message.id;
+        const stream = await client.getMessageContent(messageId);
+        const filePath = path.join(__dirname, "temp.jpg");
 
-// イベント処理
-async function handleEvent(event) {
-  if (event.type !== "message" || event.message.type !== "image") {
-    return client.replyMessage(event.replyToken, {
-      type: "text",
-      text: "画像を送ってください！📸"
-    });
+        const writable = fs.createWriteStream(filePath);
+        stream.pipe(writable);
+
+        writable.on("finish", async () => {
+          try {
+            const [result] = await visionClient.textDetection(filePath);
+            const detections = result.textAnnotations;
+            const fullText = detections.length > 0 ? detections[0].description : "";
+
+            // 💡 金額抽出：¥や円が付いてるもの、数字っぽいものを正規表現で抜き出し
+            const prices = fullText.match(/(?:¥|￥)?\d{1,3}(?:,\d{3})*(?:円)?/g) || [];
+
+            const replyText = prices.length > 0
+              ? `🧾 金額らしきものを見つけました：\n${prices.join("\n")}`
+              : "金額らしきものが見つかりませんでした。";
+
+            await client.replyMessage(event.replyToken, {
+              type: "text",
+              text: replyText,
+            });
+
+            fs.unlinkSync(filePath);
+          } catch (error) {
+            console.error("OCR処理エラー:", error);
+            await client.replyMessage(event.replyToken, {
+              type: "text",
+              text: "画像の解析中にエラーが発生しました。",
+            });
+          }
+        });
+      } catch (err) {
+        console.error("画像取得エラー:", err);
+        await client.replyMessage(event.replyToken, {
+          type: "text",
+          text: "画像を取得できませんでした。",
+        });
+      }
+    }
   }
 
-  try {
-    // LINE画像のコンテンツを取得
-    const stream = await client.getMessageContent(event.message.id);
-    const chunks = [];
-    stream.on("data", (chunk) => chunks.push(chunk));
-    await new Promise((resolve) => stream.on("end", resolve));
-    const buffer = Buffer.concat(chunks);
+  res.sendStatus(200);
+});
 
-    // OCRでテキストを抽出
-    const [result] = await visionClient.textDetection({ image: { content: buffer } });
-    const detections = result.textAnnotations;
-    const text = detections.length ? detections[0].description : "テキストが認識できませんでした。";
-
-    return client.replyMessage(event.replyToken, {
-      type: "text",
-      text: `🧾 読み取ったテキスト:\n${text}`
-    });
-  } catch (error) {
-    console.error("OCR Error:", error);
-    return client.replyMessage(event.replyToken, {
-      type: "text",
-      text: "画像の解析中にエラーが発生しました💥"
-    });
-  }
-}
-
-// ポート指定（Render上ではPORTが自動設定される）
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
-  console.log(`🚀 LINE Bot server running on port ${port}`);
+  console.log(`LINE bot is running on port ${port}`);
 });
